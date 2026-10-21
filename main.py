@@ -68,7 +68,7 @@ def list_jobs():
 def main():
     global scheduler
 
-    required_vars = ["CIRCLE_API_KEY", "CIRCLE_COMMUNITY_ID", "ANTHROPIC_API_KEY"]
+    required_vars = ["CIRCLE_API_KEY", "CIRCLE_COMMUNITY_ID", "GROQ_API_KEY"]
     missing = [v for v in required_vars if not os.getenv(v)]
     if missing:
         log.error(f"Missing required environment variables: {missing}")
