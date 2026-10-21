@@ -106,10 +106,13 @@ def job_reply(desk_key):
         own = set(s.get("own_posts", []))
         for p in circle.get_posts(space_id, per_page=10):
             pid = p["id"]
-            author = str(p.get("user_email") or p.get("user", {}).get("name", "") if isinstance(p.get("user"), dict) else p.get("user_email", ""))
+            au = p.get("author") or {}
+            author = f"{au.get('name', '')} {au.get('email', '')}" if isinstance(au, dict) else str(au)
             if pid in own or pid in s["replied"] or "SBM UK" in author or "(AI)" in author:
                 continue
-            reply = generate_reply(desk, p.get("name", ""), p.get("body", "") if isinstance(p.get("body"), str) else str(p.get("body", "")))
+            b = p.get("body")
+            text = (b.get("html") or b.get("body") or "") if isinstance(b, dict) else str(b or "")
+            reply = generate_reply(desk, p.get("name", ""), text)
             _publish_or_draft("reply", desk, {"post_id": pid, "body": reply},
                               lambda: circle.create_comment(pid, reply, email_for(desk)))
             s = st.load(); s["replied"].append(pid); s["replied"] = s["replied"][-300:]; st.save(s)

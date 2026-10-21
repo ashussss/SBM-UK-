@@ -37,6 +37,18 @@ def list_jobs():
     return jsonify({"jobs": [{"id": j.id, "name": j.name, "next_run": str(j.next_run_time)} for j in scheduler.get_jobs()]})
 
 
+@app.route("/diag")
+def diag():
+    if not _auth():
+        return jsonify({"error": "unauthorized"}), 401
+    from utils import circle_api
+    try:
+        sp = circle_api.get_spaces()
+        return jsonify({"circle_ok": True, "spaces": [{"id": x.get("id"), "name": x.get("name")} for x in sp]})
+    except Exception as e:
+        return jsonify({"circle_ok": False, "error": str(e)}), 200
+
+
 @app.route("/drafts")
 def drafts():
     if not _auth():
@@ -59,7 +71,7 @@ def run(name):
 
 def main():
     global scheduler
-    need = ["CIRCLE_API_KEY", "CIRCLE_COMMUNITY_ID", "GROQ_API_KEY", "FINANCE_BOT_EMAIL", "PROCUREMENT_BOT_EMAIL", "RUN_TOKEN"]
+    need = ["CIRCLE_API_KEY", "GROQ_API_KEY", "FINANCE_BOT_EMAIL", "PROCUREMENT_BOT_EMAIL", "RUN_TOKEN"]
     missing = [v for v in need if not os.getenv(v)]
     if missing:
         log.error(f"Missing env vars: {missing}")
