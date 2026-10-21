@@ -32,8 +32,12 @@ def load_spaces():
     """Choose spaces safely. Prefer explicit POST_SPACE_IDS; otherwise match names, never post in excluded spaces."""
     global TARGET_SPACE_IDS, WELCOME_SPACE_ID
     TARGET_SPACE_IDS = []
-    spaces = circle.get_spaces()
-    spaces = spaces if isinstance(spaces, list) else spaces.get("spaces", spaces.get("records", []))
+    raw = circle.get_spaces()
+    spaces = raw if isinstance(raw, list) else raw.get("spaces", raw.get("records", []))
+    if not spaces:
+        log.error(f"Circle returned no spaces. Response type={type(raw).__name__} "
+                  f"keys={list(raw.keys()) if isinstance(raw, dict) else len(raw)} "
+                  f"snippet={str(raw)[:300]}")
     explicit = [x.strip() for x in os.getenv("POST_SPACE_IDS", "").split(",") if x.strip()]
     for s in spaces:
         log.info(f"Space {s['id']}: {s.get('name')}")
