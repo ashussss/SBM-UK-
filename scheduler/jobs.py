@@ -27,11 +27,13 @@ log = logging.getLogger(__name__)
 
 UK_TZ = pytz.timezone("Europe/London")
 
+# ── Bot Member Accounts ───────────────────────────────────────────────────────
+ELEANOR_EMAIL = "eleanorfinch0@gmail.com"
+JAMES_EMAIL = "jameswfld924@gmail.com"
+
 # ── Space targeting ──────────────────────────────────────────────────────────
-# Set these to your actual Circle.so space IDs.
-# You can find them via GET /spaces or from your community admin URLs.
-TARGET_SPACE_IDS = []          # populated at startup from the API
-WELCOME_SPACE_ID = None        # the "Introductions" or "Welcome" space
+TARGET_SPACE_IDS = []
+WELCOME_SPACE_ID = None
 
 
 def load_spaces():
@@ -65,13 +67,13 @@ def job_eleanor_post():
         topic = random.choice(ELEANOR_PERSONA["post_topics"])
         space_id = random.choice(TARGET_SPACE_IDS)
         result = generate_post(ELEANOR_PERSONA, topic)
-        post = create_post(space_id, result["title"], result["body"])
+        post = create_post(space_id, result["title"], result["body"], user_email=ELEANOR_EMAIL)
         log.info(f"✅ Eleanor posted: '{result['title']}' (post_id={post.get('id')})")
     except Exception as e:
         log.error(f"Eleanor post failed: {e}")
 
 
-# ── Job: James replies to Eleanor's latest post ───────────────────────────────
+# ── Job: James replies to latest post ─────────────────────────────────────────
 def job_james_reply():
     log.info("▶ JOB: James — reply to recent post")
     if not TARGET_SPACE_IDS:
@@ -83,14 +85,13 @@ def job_james_reply():
         if not posts:
             log.warning("No posts found to reply to")
             return
-        # Prefer the most recent post
         target = posts[0]
         post_id = target["id"]
         title = target.get("name", "")
         body = target.get("body", "")
 
         reply = generate_reply(JAMES_PERSONA, title, body)
-        create_comment(post_id, reply)
+        create_comment(post_id, reply, user_email=JAMES_EMAIL)
         log.info(f"✅ James replied to post_id={post_id}: '{title}'")
     except Exception as e:
         log.error(f"James reply failed: {e}")
@@ -105,13 +106,13 @@ def job_james_post():
         topic = random.choice(JAMES_PERSONA["post_topics"])
         space_id = random.choice(TARGET_SPACE_IDS)
         result = generate_post(JAMES_PERSONA, topic)
-        post = create_post(space_id, result["title"], result["body"])
+        post = create_post(space_id, result["title"], result["body"], user_email=JAMES_EMAIL)
         log.info(f"✅ James posted: '{result['title']}' (post_id={post.get('id')})")
     except Exception as e:
         log.error(f"James post failed: {e}")
 
 
-# ── Job: Eleanor replies to James's latest post ───────────────────────────────
+# ── Job: Eleanor replies to latest post ──────────────────────────────────────
 def job_eleanor_reply():
     log.info("▶ JOB: Eleanor — reply to recent post")
     if not TARGET_SPACE_IDS:
@@ -128,7 +129,7 @@ def job_eleanor_reply():
             target.get("name", ""),
             target.get("body", ""),
         )
-        create_comment(target["id"], reply)
+        create_comment(target["id"], reply, user_email=ELEANOR_EMAIL)
         log.info(f"✅ Eleanor replied to post_id={target['id']}")
     except Exception as e:
         log.error(f"Eleanor reply failed: {e}")
@@ -158,13 +159,14 @@ def job_welcome_new_members():
             name = member.get("name", "") or member.get("full_name", "Unknown")
             role = member.get("headline", "") or member.get("bio", "")
             persona = ELEANOR_PERSONA if i % 2 == 0 else JAMES_PERSONA
+            persona_email = ELEANOR_EMAIL if i % 2 == 0 else JAMES_EMAIL
 
             welcome = generate_welcome_comment(persona, name, role)
-            # Post as a new thread in the welcome space
             create_post(
                 space_id,
                 f"Welcome to the community, {name}! 👋",
                 welcome,
+                user_email=persona_email,
             )
             log.info(f"✅ {persona['name']} welcomed {name}")
     except Exception as e:

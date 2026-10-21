@@ -93,3 +93,27 @@ def get_community_members(per_page: int = 50):
     response = requests.get(url, headers=HEADERS, params=params)
     response.raise_for_status()
     return response.json()
+
+
+def create_or_get_member(email: str, name: str, bio: str = ""):
+    """Create a new member account or get existing one by email."""
+    url = f"{CIRCLE_API_BASE}/community_members"
+    payload = {
+        "community_id": CIRCLE_COMMUNITY_ID,
+        "email": email,
+        "name": name,
+    }
+    if bio:
+        payload["bio"] = bio
+
+    try:
+        response = requests.post(url, headers=HEADERS, json=payload)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
+        # If account already exists, try to fetch it
+        if e.response.status_code == 409 or e.response.status_code == 400:
+            # Account might already exist, return the email
+            return {"email": email, "name": name}
+        raise
+
