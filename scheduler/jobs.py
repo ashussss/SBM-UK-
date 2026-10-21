@@ -1,220 +1,158 @@
-import logging
-import random
+import logging, os
 import pytz
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from agents.personas import ELEANOR_PERSONA, JAMES_PERSONA
-from agents.content_generator import (
-    generate_post,
-    generate_reply,
-    generate_welcome_comment,
-)
-from utils.circle_api import (
-    get_spaces,
-    get_posts,
-    get_new_members,
-    create_post,
-    create_comment,
-)
+from agents.personas import DESKS
+from agents.content_generator import generate_post, generate_reply, generate_welcome
+from utils import circle_api as circle
+from utils import state as st
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
 log = logging.getLogger(__name__)
-
 UK_TZ = pytz.timezone("Europe/London")
 
-# ── Bot Member Accounts ───────────────────────────────────────────────────────
-ELEANOR_EMAIL = "eleanorfinch0@gmail.com"
-JAMES_EMAIL = "jameswfld924@gmail.com"
+AUTO_POST = os.getenv("AUTO_POST", "false").lower() == "true"   # false = save drafts only
+DAYS = os.getenv("POST_DAYS", "mon-fri")
+EXCLUDE = ["supplier", "marketplace", "announce", "welcome", "intro", "event", "resource", "admin", "procurement hub", "newsletter"]
+INCLUDE = ["discussion", "general", "community", "finance", "procurement", "chat", "ask"]
 
-# ── Space targeting ──────────────────────────────────────────────────────────
 TARGET_SPACE_IDS = []
 WELCOME_SPACE_ID = None
 
 
+def email_for(desk):
+    e = os.getenv(desk["email_env"])
+    if not e:
+        raise RuntimeError(f"{desk['email_env']} not set")
+    return e
+
+
 def load_spaces():
-    """Fetch community spaces and cache IDs for use in jobs."""
+    """Choose spaces safely. Prefer explicit POST_SPACE_IDS; otherwise match names, never post in excluded spaces."""
     global TARGET_SPACE_IDS, WELCOME_SPACE_ID
-    try:
-        spaces = get_spaces()
-        log.info(f"Found {len(spaces)} spaces")
-        for s in spaces:
-            log.info(f"  Space: {s['id']} — {s['name']}")
-            slug = s.get("slug", "").lower()
-            name = s.get("name", "").lower()
-            if any(k in name or k in slug for k in ["welcome", "introduction", "intro", "new"]):
-                WELCOME_SPACE_ID = s["id"]
-            else:
+    TARGET_SPACE_IDS = []
+    spaces = circle.get_spaces()
+    spaces = spaces if isinstance(spaces, list) else spaces.get("spaces", spaces.get("records", []))
+    explicit = [x.strip() for x in os.getenv("POST_SPACE_IDS", "").split(",") if x.strip()]
+    for s in spaces:
+        log.info(f"Space {s['id']}: {s.get('name')}")
+        name = (s.get("name", "") + " " + s.get("slug", "")).lower()
+        if "welcome" in name or "introduc" in name:
+            WELCOME_SPACE_ID = os.getenv("WELCOME_SPACE_ID") and int(os.getenv("WELCOME_SPACE_ID")) or s["id"]
+        if explicit:
+            if str(s["id"]) in explicit:
                 TARGET_SPACE_IDS.append(s["id"])
-        if not TARGET_SPACE_IDS and spaces:
-            TARGET_SPACE_IDS = [spaces[0]["id"]]
-        log.info(f"Welcome space: {WELCOME_SPACE_ID} | Target spaces: {TARGET_SPACE_IDS}")
-    except Exception as e:
-        log.error(f"Failed to load spaces: {e}")
-
-
-# ── Job: Eleanor posts a new discussion thread ────────────────────────────────
-def job_eleanor_post():
-    log.info("▶ JOB: Eleanor — new post")
+        elif any(k in name for k in INCLUDE) and not any(k in name for k in EXCLUDE):
+            TARGET_SPACE_IDS.append(s["id"])
+    log.info(f"Target spaces: {TARGET_SPACE_IDS} | welcome space: {WELCOME_SPACE_ID}")
     if not TARGET_SPACE_IDS:
-        log.warning("No target spaces configured — skipping")
-        return
-    try:
-        topic = random.choice(ELEANOR_PERSONA["post_topics"])
-        space_id = random.choice(TARGET_SPACE_IDS)
-        result = generate_post(ELEANOR_PERSONA, topic)
-        post = create_post(space_id, result["title"], result["body"], user_email=ELEANOR_EMAIL)
-        log.info(f"✅ Eleanor posted: '{result['title']}' (post_id={post.get('id')})")
-    except Exception as e:
-        log.error(f"Eleanor post failed: {e}")
+        log.error("No safe target space found. Set POST_SPACE_IDS in the environment.")
 
 
-# ── Job: James replies to latest post ─────────────────────────────────────────
-def job_james_reply():
-    log.info("▶ JOB: James — reply to recent post")
+def _pick_space(desk):
     if not TARGET_SPACE_IDS:
-        return
+        load_spaces()
+    if not TARGET_SPACE_IDS:
+        raise RuntimeError("No target space configured (set POST_SPACE_IDS)")
+    # rotate through spaces deterministically by day so posts spread out
+    return TARGET_SPACE_IDS[datetime.now(UK_TZ).toordinal() % len(TARGET_SPACE_IDS)]
+
+
+def _publish_or_draft(kind, desk, payload, publish_fn):
+    s = st.load()
+    if AUTO_POST:
+        res = publish_fn()
+        return res
+    s["drafts"].append({"kind": kind, "desk": desk["name"], "at": datetime.now(UK_TZ).isoformat(), **payload})
+    s["drafts"] = s["drafts"][-100:]
+    st.save(s)
+    log.info(f"DRAFT saved ({kind}, {desk['name']}). Set AUTO_POST=true to publish.")
+    return {"draft": True}
+
+
+def job_post(desk_key):
+    desk = DESKS[desk_key]
+    log.info(f"JOB post: {desk['name']}")
     try:
-        space_id = random.choice(TARGET_SPACE_IDS)
-        posts_data = get_posts(space_id, per_page=5)
-        posts = posts_data if isinstance(posts_data, list) else posts_data.get("posts", [])
-        if not posts:
-            log.warning("No posts found to reply to")
+        s = st.load()
+        space_id = _pick_space(desk)
+        out = generate_post(desk, s["titles"])
+        res = _publish_or_draft("post", desk, {"space_id": space_id, "title": out["title"], "body": out["body"]},
+                                lambda: circle.create_post(space_id, out["title"], out["body"], email_for(desk)))
+        s = st.load()
+        s["titles"].append(out["title"])
+        s["titles"] = s["titles"][-200:]
+        if isinstance(res, dict) and res.get("id"):
+            s.setdefault("own_posts", []).append(res["id"])
+        st.save(s)
+        log.info(f"Post done: {out['title']}")
+        return out["title"]
+    except Exception as e:
+        log.error(f"Post failed ({desk_key}): {e}")
+        raise
+
+
+def job_reply(desk_key):
+    desk = DESKS[desk_key]
+    log.info(f"JOB reply: {desk['name']}")
+    try:
+        s = st.load()
+        space_id = _pick_space(desk)
+        own = set(s.get("own_posts", []))
+        for p in circle.get_posts(space_id, per_page=10):
+            pid = p["id"]
+            author = str(p.get("user_email") or p.get("user", {}).get("name", "") if isinstance(p.get("user"), dict) else p.get("user_email", ""))
+            if pid in own or pid in s["replied"] or "SBM UK" in author or "(AI)" in author:
+                continue
+            reply = generate_reply(desk, p.get("name", ""), p.get("body", "") if isinstance(p.get("body"), str) else str(p.get("body", "")))
+            _publish_or_draft("reply", desk, {"post_id": pid, "body": reply},
+                              lambda: circle.create_comment(pid, reply, email_for(desk)))
+            s = st.load(); s["replied"].append(pid); s["replied"] = s["replied"][-300:]; st.save(s)
+            log.info(f"Replied to post {pid}")
+            return pid
+        log.info("No suitable post to reply to")
+    except Exception as e:
+        log.error(f"Reply failed ({desk_key}): {e}")
+        raise
+
+
+def job_welcome():
+    log.info("JOB welcome")
+    try:
+        s = st.load()
+        members = circle.get_new_members(per_page=10)
+        if not s["seeded_members"]:      # first run: remember existing members, welcome nobody
+            s["welcomed"] = [m["id"] for m in members]
+            s["seeded_members"] = True
+            st.save(s)
+            log.info("Seeded existing members; no welcomes sent on first run")
             return
-        target = posts[0]
-        post_id = target["id"]
-        title = target.get("name", "")
-        body = target.get("body", "")
-
-        reply = generate_reply(JAMES_PERSONA, title, body)
-        create_comment(post_id, reply, user_email=JAMES_EMAIL)
-        log.info(f"✅ James replied to post_id={post_id}: '{title}'")
-    except Exception as e:
-        log.error(f"James reply failed: {e}")
-
-
-# ── Job: James posts a new procurement discussion ─────────────────────────────
-def job_james_post():
-    log.info("▶ JOB: James — new post")
-    if not TARGET_SPACE_IDS:
-        return
-    try:
-        topic = random.choice(JAMES_PERSONA["post_topics"])
-        space_id = random.choice(TARGET_SPACE_IDS)
-        result = generate_post(JAMES_PERSONA, topic)
-        post = create_post(space_id, result["title"], result["body"], user_email=JAMES_EMAIL)
-        log.info(f"✅ James posted: '{result['title']}' (post_id={post.get('id')})")
-    except Exception as e:
-        log.error(f"James post failed: {e}")
-
-
-# ── Job: Eleanor replies to latest post ──────────────────────────────────────
-def job_eleanor_reply():
-    log.info("▶ JOB: Eleanor — reply to recent post")
-    if not TARGET_SPACE_IDS:
-        return
-    try:
-        space_id = random.choice(TARGET_SPACE_IDS)
-        posts_data = get_posts(space_id, per_page=5)
-        posts = posts_data if isinstance(posts_data, list) else posts_data.get("posts", [])
-        if not posts:
-            return
-        target = posts[0]
-        reply = generate_reply(
-            ELEANOR_PERSONA,
-            target.get("name", ""),
-            target.get("body", ""),
-        )
-        create_comment(target["id"], reply, user_email=ELEANOR_EMAIL)
-        log.info(f"✅ Eleanor replied to post_id={target['id']}")
-    except Exception as e:
-        log.error(f"Eleanor reply failed: {e}")
-
-
-# ── Job: Welcome new members ──────────────────────────────────────────────────
-def job_welcome_new_members():
-    log.info("▶ JOB: Welcome new members")
-    try:
-        members_data = get_new_members(per_page=5)
-        members = (
-            members_data
-            if isinstance(members_data, list)
-            else members_data.get("community_members", [])
-        )
-        if not members:
-            log.info("No new members to welcome")
-            return
-
-        space_id = WELCOME_SPACE_ID or (TARGET_SPACE_IDS[0] if TARGET_SPACE_IDS else None)
+        space_id = WELCOME_SPACE_ID
         if not space_id:
-            log.warning("No space available for welcome posts")
+            log.warning("No welcome space found; skipping")
             return
-
-        # Alternate welcomes between Eleanor and James
-        for i, member in enumerate(members[:3]):
-            name = member.get("name", "") or member.get("full_name", "Unknown")
-            role = member.get("headline", "") or member.get("bio", "")
-            persona = ELEANOR_PERSONA if i % 2 == 0 else JAMES_PERSONA
-            persona_email = ELEANOR_EMAIL if i % 2 == 0 else JAMES_EMAIL
-
-            welcome = generate_welcome_comment(persona, name, role)
-            create_post(
-                space_id,
-                f"Welcome to the community, {name}! 👋",
-                welcome,
-                user_email=persona_email,
-            )
-            log.info(f"✅ {persona['name']} welcomed {name}")
+        desk = DESKS["finance"]
+        for m in members:
+            if m["id"] in s["welcomed"]:
+                continue
+            name = m.get("name") or m.get("full_name") or "there"
+            body = generate_welcome(desk, name, m.get("headline", "") or "")
+            _publish_or_draft("welcome", desk, {"space_id": space_id, "title": f"Welcome, {name}", "body": body},
+                              lambda: circle.create_post(space_id, f"Welcome, {name}", body, email_for(desk)))
+            s = st.load(); s["welcomed"].append(m["id"]); st.save(s)
+            return  # one welcome per run keeps it light
     except Exception as e:
-        log.error(f"Welcome job failed: {e}")
+        log.error(f"Welcome failed: {e}")
+        raise
 
 
-# ── Schedule setup ────────────────────────────────────────────────────────────
-def build_scheduler() -> BackgroundScheduler:
-    scheduler = BackgroundScheduler(timezone=UK_TZ)
-
-    # Eleanor posts a new thread — Mon–Fri at 08:30 UK time
-    scheduler.add_job(
-        job_eleanor_post,
-        CronTrigger(day_of_week="mon-fri", hour=8, minute=30, timezone=UK_TZ),
-        id="eleanor_post",
-        name="Eleanor — morning discussion post",
-    )
-
-    # James replies to the latest post — Mon–Fri at 11:00 UK time
-    scheduler.add_job(
-        job_james_reply,
-        CronTrigger(day_of_week="mon-fri", hour=11, minute=0, timezone=UK_TZ),
-        id="james_reply",
-        name="James — mid-morning reply",
-    )
-
-    # James posts a new procurement thread — Tue & Thu at 09:00 UK time
-    scheduler.add_job(
-        job_james_post,
-        CronTrigger(day_of_week="tue,thu", hour=9, minute=0, timezone=UK_TZ),
-        id="james_post",
-        name="James — procurement discussion post",
-    )
-
-    # Eleanor replies — Wed & Fri at 14:00 UK time
-    scheduler.add_job(
-        job_eleanor_reply,
-        CronTrigger(day_of_week="wed,fri", hour=14, minute=0, timezone=UK_TZ),
-        id="eleanor_reply",
-        name="Eleanor — afternoon reply",
-    )
-
-    # Welcome new members — every day at 09:15 UK time
-    scheduler.add_job(
-        job_welcome_new_members,
-        CronTrigger(hour=9, minute=15, timezone=UK_TZ),
-        id="welcome_members",
-        name="Welcome new members",
-    )
-
-    return scheduler
+def build_scheduler():
+    sch = BackgroundScheduler(timezone=UK_TZ)
+    t = lambda h, m, days=DAYS: CronTrigger(day_of_week=days, hour=h, minute=m, timezone=UK_TZ)
+    sch.add_job(job_post, t(9, 0), args=["finance"], id="finance_post", name="Finance Desk post 09:00", misfire_grace_time=1800)
+    sch.add_job(job_post, t(15, 0), args=["procurement"], id="procurement_post", name="Procurement Desk post 15:00", misfire_grace_time=1800)
+    sch.add_job(job_reply, t(11, 30), args=["procurement"], id="procurement_reply", name="Procurement reply 11:30", misfire_grace_time=1800)
+    sch.add_job(job_reply, t(16, 30), args=["finance"], id="finance_reply", name="Finance reply 16:30", misfire_grace_time=1800)
+    sch.add_job(job_welcome, CronTrigger(hour=10, minute=0, timezone=UK_TZ), id="welcome", name="Welcome new members 10:00", misfire_grace_time=1800)
+    return sch
