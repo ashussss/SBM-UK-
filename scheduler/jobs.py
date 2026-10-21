@@ -55,11 +55,15 @@ def load_spaces():
 
 
 def _pick_space(desk):
+    """Each desk has its own fixed space (FINANCE_SPACE_ID / PROCUREMENT_SPACE_ID).
+    Falls back to POST_SPACE_IDS rotation if the per-desk variable is not set."""
+    fixed = os.getenv(f"{desk['key'].upper()}_SPACE_ID")
+    if fixed:
+        return int(fixed)
     if not TARGET_SPACE_IDS:
         load_spaces()
     if not TARGET_SPACE_IDS:
-        raise RuntimeError("No target space configured (set POST_SPACE_IDS)")
-    # rotate through spaces deterministically by day so posts spread out
+        raise RuntimeError("No target space configured (set FINANCE_SPACE_ID / PROCUREMENT_SPACE_ID)")
     return TARGET_SPACE_IDS[datetime.now(UK_TZ).toordinal() % len(TARGET_SPACE_IDS)]
 
 
