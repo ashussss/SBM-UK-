@@ -159,11 +159,15 @@ def job_welcome():
 
 
 def build_scheduler():
+    """Only the two daily posts are scheduled by default.
+    Replies and welcomes are OFF unless REPLIES_ENABLED / WELCOME_ENABLED are set to true."""
     sch = BackgroundScheduler(timezone=UK_TZ)
     t = lambda h, m, days=DAYS: CronTrigger(day_of_week=days, hour=h, minute=m, timezone=UK_TZ)
     sch.add_job(job_post, t(9, 0), args=["finance"], id="finance_post", name="Finance Desk post 09:00", misfire_grace_time=1800)
     sch.add_job(job_post, t(15, 0), args=["procurement"], id="procurement_post", name="Procurement Desk post 15:00", misfire_grace_time=1800)
-    sch.add_job(job_reply, t(11, 30), args=["procurement"], id="procurement_reply", name="Procurement reply 11:30", misfire_grace_time=1800)
-    sch.add_job(job_reply, t(16, 30), args=["finance"], id="finance_reply", name="Finance reply 16:30", misfire_grace_time=1800)
-    sch.add_job(job_welcome, CronTrigger(hour=10, minute=0, timezone=UK_TZ), id="welcome", name="Welcome new members 10:00", misfire_grace_time=1800)
+    if os.getenv("REPLIES_ENABLED", "false").lower() == "true":
+        sch.add_job(job_reply, t(11, 30), args=["procurement"], id="procurement_reply", name="Procurement reply 11:30", misfire_grace_time=1800)
+        sch.add_job(job_reply, t(16, 30), args=["finance"], id="finance_reply", name="Finance reply 16:30", misfire_grace_time=1800)
+    if os.getenv("WELCOME_ENABLED", "false").lower() == "true":
+        sch.add_job(job_welcome, CronTrigger(hour=10, minute=0, timezone=UK_TZ), id="welcome", name="Welcome new members 10:00", misfire_grace_time=1800)
     return sch

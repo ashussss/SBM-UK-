@@ -27,3 +27,6 @@ Edit `config/topics.py` weekly. Posts may only state dates and figures that appe
 
 ## Deploy on Render
 Web Service, build `pip install -r requirements.txt`, start `python main.py`. Use a paid always-on instance (free instances sleep and miss scheduled jobs). State is saved in `data/state.json`; add a Render disk and set `STATE_PATH` to it, otherwise duplicate-protection resets on each deploy.
+
+
+**Update:** by default only the two daily posts run (09:00 Finance, 15:00 Procurement, UK time). Replies and welcomes are off; enable with `REPLIES_ENABLED=true` / `WELCOME_ENABLED=true`.
