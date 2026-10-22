@@ -29,7 +29,7 @@ def _base(desk_name):
     d.rectangle([0, 0, W, 14], fill=GREEN)
     d.rectangle([0, H - 150, W, H], fill=NAVY2)
     d.text((64, H - 112), desk_name, font=_f("Bold", 30), fill=WHITE)
-    d.text((64, H - 66), "www.schoolbusinessmanager.uk  |  AI-generated content", font=_f("Regular", 24), fill=SOFT)
+    d.text((64, H - 66), "www.schoolbusinessmanager.uk", font=_f("Regular", 24), fill=SOFT)
     return im, d
 
 
