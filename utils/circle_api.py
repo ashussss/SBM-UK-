@@ -80,8 +80,14 @@ def _try(path, variants):
     raise RuntimeError(" | ".join(errs))
 
 
-def create_post(space_id, name, body, user_email):
+def create_post(space_id, name, body, user_email, image_urls=None):
     base = {"space_id": space_id, "name": name, "user_email": user_email, "status": "published"}
+    if image_urls:
+        imgs = "".join(f'<p><img src="{u}" alt="{html.escape(name)}"></p>' for u in image_urls)
+        page = imgs + _html(body)
+        node = [{"type": "image", "attrs": {"src": u, "alt": name}} for u in image_urls]
+        tt = _tiptap(body); tt["body"]["content"] = node + tt["body"]["content"]
+        return _try("posts", [{**base, "body": page}, {**base, "internal_custom_html": page}, {**base, "tiptap_body": tt}])
     return _try("posts", [{**base, "tiptap_body": _tiptap(body)}, {**base, "body": _html(body)}, {**base, "internal_custom_html": _html(body)}])
 
 

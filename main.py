@@ -1,5 +1,5 @@
 import os, logging
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory, abort
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -35,6 +35,15 @@ def list_jobs():
     if not _auth():
         return jsonify({"error": "unauthorized"}), 401
     return jsonify({"jobs": [{"id": j.id, "name": j.name, "next_run": str(j.next_run_time)} for j in scheduler.get_jobs()]})
+
+
+@app.route("/img/<name>")
+def img(name):
+    import re
+    from utils import visuals
+    if not re.fullmatch(r"[0-9a-f]{32}\.png", name):
+        abort(404)
+    return send_from_directory(os.path.abspath(visuals.IMAGE_DIR), name, mimetype="image/png", max_age=86400)
 
 
 @app.route("/diag")

@@ -79,6 +79,23 @@ def _publish_or_draft(kind, desk, payload, publish_fn):
     return {"draft": True}
 
 
+def _make_images(desk, out):
+    mode = os.getenv("IMAGE_MODE", "off").lower()
+    if mode == "off" or len(out.get("points", [])) < 2:
+        return []
+    from utils import visuals
+    base = os.getenv("PUBLIC_URL", "https://sbm-uk.onrender.com").rstrip("/")
+    try:
+        if mode == "carousel":
+            names = visuals.carousel(out["title"], out["points"], out["question"], desk["name"])
+        else:
+            names = [visuals.infographic(out["title"], out["points"], desk["name"])]
+        return [f"{base}/img/{n}" for n in names]
+    except Exception as e:
+        log.error(f"Image generation failed, posting text only: {e}")
+        return []
+
+
 def job_post(desk_key):
     desk = DESKS[desk_key]
     log.info(f"JOB post: {desk['name']}")
@@ -86,8 +103,9 @@ def job_post(desk_key):
         s = st.load()
         space_id = _pick_space(desk)
         out = generate_post(desk, s["titles"])
-        res = _publish_or_draft("post", desk, {"space_id": space_id, "title": out["title"], "body": out["body"]},
-                                lambda: circle.create_post(space_id, out["title"], out["body"], email_for(desk)))
+        images = _make_images(desk, out)
+        res = _publish_or_draft("post", desk, {"space_id": space_id, "title": out["title"], "body": out["body"], "images": images},
+                                lambda: circle.create_post(space_id, out["title"], out["body"], email_for(desk), image_urls=images))
         s = st.load()
         s["titles"].append(out["title"])
         s["titles"] = s["titles"][-200:]

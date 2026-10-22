@@ -56,18 +56,30 @@ Write a specific, useful thread:
 - BODY: 140-220 words. Start with the practical issue, give 2-3 useful pointers, end with ONE question inviting members to share what they do.
 - Do not say "as a CFO/manager" or claim experience. You are an AI desk.
 
+Also give content for an infographic:
+- POINTS: exactly 3 lines, each starting with "- ", each max 14 words, plain and practical (no invented dates or figures)
+- QUESTION: the one closing question, max 18 words
+
 Format exactly:
 TITLE: ...
 BODY: ...
+POINTS:
+- ...
+- ...
+- ...
+QUESTION: ...
 """
     raw = _chat(desk["system_prompt"], prompt, 600)
     m = re.search(r"TITLE:\s*(.+)", raw)
-    b = re.search(r"BODY:\s*(.+)", raw, re.S)
+    b = re.search(r"BODY:\s*(.+?)(?=\n\s*POINTS:|\Z)", raw, re.S)
+    pts = [x.strip("-• ").strip() for x in re.findall(r"^\s*[-•]\s*(.+)$", raw.split("POINTS:")[-1] if "POINTS:" in raw else "", re.M)][:3]
+    q = re.search(r"QUESTION:\s*(.+)", raw)
     title = (m.group(1).strip().strip('*"') if m else "")[:120]
     body = (b.group(1).strip() if b else "")
     if not title or len(body) < 200:
         raise ValueError("Model output missing title/body; skipping post")
-    return {"title": title, "body": body + footer(desk)}
+    return {"title": title, "body": body + footer(desk), "points": pts,
+            "question": q.group(1).strip() if q else "What is your experience of this?"}
 
 
 def generate_reply(desk, post_title, post_body):
