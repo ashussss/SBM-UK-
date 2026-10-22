@@ -44,7 +44,9 @@ def diag():
     from utils import circle_api
     try:
         sp = circle_api.get_spaces()
-        return jsonify({"circle_ok": True, "spaces": [{"id": x.get("id"), "name": x.get("name")} for x in sp]})
+        return jsonify({"circle_ok": True, "spaces": [
+            {"id": x.get("id"), "name": x.get("name"), "slug": x.get("slug"), "url": x.get("url")}
+            for x in sp if not request.args.get("q") or request.args["q"].lower() in f"{x.get('name','')} {x.get('slug','')} {x.get('url','')}".lower()]})
     except Exception as e:
         return jsonify({"circle_ok": False, "error": str(e)}), 200
 
