@@ -8,17 +8,25 @@ from agents.personas import DISCLOSURE
 
 load_dotenv()
 _client = None
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def _chat(system, user, max_tokens):
     global _client
     if _client is None:
         _client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    kwargs = {}
+    if "gpt-oss" in GROQ_MODEL:
+        # reasoning model: keep thinking short and leave room for the answer
+        kwargs["extra_body"] = {"reasoning_effort": "low"}
+        max_tokens = max_tokens * 3
     r = _client.chat.completions.create(
         model=GROQ_MODEL, max_tokens=max_tokens, temperature=0.8,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        **kwargs,
     )
+    if not (r.choices[0].message.content or "").strip():
+        raise RuntimeError(f"Empty model output from {GROQ_MODEL}")
     return r.choices[0].message.content.strip()
 
 
